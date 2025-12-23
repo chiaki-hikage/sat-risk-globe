@@ -73,6 +73,15 @@ def get_globe_mesh(res_lon=160, res_lat=80, R=1.0):
     X, Y, Z = ll_to_xyz(Lat, Lon, R=R)
     return Lon, Lat, X, Y, Z
 
+@st.cache_data(show_spinner=False)
+def get_lines_xyz_cached(res: str, kind: str, stride: int, R: float):
+    path = MAP_FILES[res]["borders"] if kind == "borders" else MAP_FILES[res]["coast"]
+    lines, err = load_geojson_lines(path)
+    if err:
+        return [], [], [], err
+    xs, ys, zs = lines_to_xyz(lines, stride=stride, R=R)
+    return xs, ys, zs, None
+
 # ----------------------------
 # Helpers (GeoJSON lines)
 # ----------------------------
@@ -331,24 +340,15 @@ if show_surface:
 
 # Borders / Coast (local GeoJSON)
 LINE_R = 1.008
-
 if show_borders:
-    path = MAP_FILES[ne_res]["borders"]
-    lines, err = load_geojson_lines(path)
-    if err:
-        st.warning(err)
-    else:
-        bx, by, bz = lines_to_xyz(lines, stride=outline_stride, R=LINE_R)
-        fig.add_trace(go.Scatter3d(x=bx, y=by, z=bz, mode="lines", line=dict(width=2), hoverinfo="skip", name="Borders"))
+    bx, by, bz, err = get_lines_xyz_cached(ne_res, "borders", int(outline_stride), LINE_R)
+    if err: st.warning(err)
+    else: fig.add_trace(go.Scatter3d(x=bx,y=by,z=bz, mode="lines", line=dict(width=2), hoverinfo="skip"))
 
 if show_coast:
-    path = MAP_FILES[ne_res]["coast"]
-    lines, err = load_geojson_lines(path)
-    if err:
-        st.warning(err)
-    else:
-        cx, cy, cz = lines_to_xyz(lines, stride=outline_stride, R=LINE_R)
-        fig.add_trace(go.Scatter3d(x=cx, y=cy, z=cz, mode="lines", line=dict(width=2), hoverinfo="skip", name="Coast"))
+    cx, cy, cz, err = get_lines_xyz_cached(ne_res, "coastline", int(outline_stride), LINE_R)
+    if err: st.warning(err)
+    else: fig.add_trace(go.Scatter3d(x=cx,y=cy,z=cz, mode="lines", line=dict(width=2), hoverinfo="skip"))
 
 # Satellites (local TLE)
 if sat_conf["type"] == "tle":
@@ -405,8 +405,8 @@ fig.update_layout(
         camera=dict(eye=dict(x=0.8, y=0.8, z=0.9)),
     ),
     showlegend=False,
+    uirevision="globe",
 )
 
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, use_container_width=True, key="globe_chart")
 st.caption("Drag to rotate / Scroll to zoom")
-st.info("ローカルTLE/ローカルGeoJSONのみで動作します（外部アクセスなし）。")
