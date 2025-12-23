@@ -37,3 +37,13 @@
         ├── 50m_coastline.geojson      (optional)
         ├── 10m_borders.geojson        (optional)
         └── 10m_coastline.geojson      (optional)
+```
+---
+
+## run locally
+
+```ruby
+pip install -r requirements.txt
+streamlit run app.py
+```
+
