@@ -2,9 +2,4 @@ streamlit
 streamlit-autorefresh
 plotly
 numpy
-pandas
-geopandas
-shapely
-pyproj
-fiona
 skyfield
