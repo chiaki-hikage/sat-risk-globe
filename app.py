@@ -536,9 +536,9 @@ with st.sidebar:
     #st.divider()
     #st.header("Performance")
     #globe_res_lon = st.select_slider("Globe grid res_lon", options=[80, 120, 160, 200], value=160)
-    globe_res_lon = 160
+    globe_res_lon = 80
     #globe_res_lat = st.select_slider("Globe grid res_lat", options=[40, 60, 80, 100], value=80)
-    globe_res_lat = 80
+    globe_res_lat = 40
 
 # ----------------------------
 # Load satellites
