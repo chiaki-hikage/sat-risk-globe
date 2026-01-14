@@ -501,8 +501,8 @@ with st.sidebar:
     st.divider()
     st.header("Animation (Plotly frames)")
     frame_step_sec = st.select_slider("Frame step (seconds)", options=[10, 30, 60, 120, 300], value=60)
-    n_frames = st.slider("#frames", 5, 120, 30, help="例: step=60秒, frames=30 なら30分ぶん")
-    play_speed_ms = st.slider("Play frame duration (ms)", 50, 1500, 250, 50,
+    n_frames = st.slider("#frames", 5, 120, 20, help="例: step=60秒, frames=20 なら20分ぶん")
+    play_speed_ms = st.slider("Play frame duration (ms)", 50, 1500, 500, 50,
                               help="小さいほど速く再生（重い場合は大きく）")
 
     st.divider()
