@@ -501,7 +501,7 @@ with st.sidebar:
     )
     sat_conf = SAT_GROUPS[sat_label]
     st.caption(sat_conf["note"])
-    max_sats = st.slider("Max satellites", 1, 300 if "Starlink" in sat_label else 150, 10)
+    max_sats = st.slider("Max satellites", 1, 300 if "Starlink" in sat_label else 150, 30)
 
     st.divider()
     st.header("Animation (Plotly frames)")
