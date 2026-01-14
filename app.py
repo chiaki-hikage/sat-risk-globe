@@ -493,6 +493,7 @@ with st.sidebar:
 
     st.divider()
     st.header("Satellites")
+    sat_options = list(SAT_GROUPS.keys())
     sat_label = st.selectbox(
         "Satellite type",
         options=sat_options,
