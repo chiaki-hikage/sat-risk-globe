@@ -496,7 +496,7 @@ with st.sidebar:
     sat_label = st.selectbox("Satellite type", options=list(SAT_GROUPS.keys()), index=0)
     sat_conf = SAT_GROUPS[sat_label]
     st.caption(sat_conf["note"])
-    max_sats = st.slider("Max satellites", 1, 300 if "Starlink" in sat_label else 150, 50)
+    max_sats = st.slider("Max satellites", 1, 300 if "Starlink" in sat_label else 150, 30)
 
     st.divider()
     st.header("Animation (Plotly frames)")
@@ -521,7 +521,7 @@ with st.sidebar:
     show_surface = True
     show_borders = True
     show_coast   = True
-    outline_stride = 2
+    outline_stride = 5
 
     st.divider()
     st.header("Risk layer (dummy)")
