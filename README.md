@@ -4,7 +4,7 @@
 
 - ✅ **TLE はローカルファイル読み込み**（CelesTrak 403 / IPブロック回避）
 - ✅ **国境線 / 海岸線はローカル GeoJSON 読み込み**（GeoPandas不要、外部障害に強い）
-- ✅ Play/Stop と時間ジャンプに対応
+- ✅ Play/Pause と時間ジャンプに対応
 
 ---
 
