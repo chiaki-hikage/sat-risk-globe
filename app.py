@@ -12,7 +12,7 @@ from skyfield.api import load, wgs84
 # Page
 # ----------------------------
 st.set_page_config(layout="wide")
-st.title("衛星軌道と宇宙天気の通信影響リスクの可視化デモ")
+st.title("衛星軌道と宇宙天気の可視化デモ")
 
 # ----------------------------
 # Paths (local)
