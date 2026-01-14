@@ -493,7 +493,11 @@ with st.sidebar:
 
     st.divider()
     st.header("Satellites")
-    sat_label = st.selectbox("Satellite type", options=list(SAT_GROUPS.keys()), index=0)
+    sat_label = st.selectbox(
+        "Satellite type",
+        options=sat_options,
+        index=sat_options.index("Starlink (sample)")
+    )
     sat_conf = SAT_GROUPS[sat_label]
     st.caption(sat_conf["note"])
     max_sats = st.slider("Max satellites", 1, 300 if "Starlink" in sat_label else 150, 30)
