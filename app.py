@@ -7,10 +7,12 @@ import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 from skyfield.api import load, wgs84
-from streamlit_autorefresh import st_autorefresh
 
+# ----------------------------
+# Page
+# ----------------------------
 st.set_page_config(layout="wide")
-st.title("3D Globe + Outlines + Moving Satellites (Local TLE + Local GeoJSON)")
+st.title("3D Globe + Outlines + Moving Satellites + Risk (Plotly Frames / Local TLE + Local GeoJSON)")
 
 # ----------------------------
 # Paths (local)
@@ -25,26 +27,20 @@ TLE_FILES = {
     "starlink_sample": os.path.join(TLE_DIR, "starlink_sample.tle"),
 }
 
+# Resolution is fixed to 50m per request
+NE_RES_FIXED = "50m"
 MAP_FILES = {
-    "110m": {
-        "borders": os.path.join(MAP_DIR, "110m_borders.geojson"),
-        "coast": os.path.join(MAP_DIR, "110m_coastline.geojson"),
-    },
     "50m": {
         "borders": os.path.join(MAP_DIR, "50m_borders.geojson"),
         "coast": os.path.join(MAP_DIR, "50m_coastline.geojson"),
     },
-    "10m": {
-        "borders": os.path.join(MAP_DIR, "10m_borders.geojson"),
-        "coast": os.path.join(MAP_DIR, "10m_coastline.geojson"),
-    },
 }
 
 SAT_GROUPS = {
-    "ISS / Stations (LEO)": {"type": "tle", "group": "stations", "note": "LEO, 動きが速くデモ向き"},
-    "GNSS (GPS, Galileo etc.)": {"type": "tle", "group": "gnss", "note": "MEO, 測位衛星"},
-    "Weather Satellites": {"type": "tle", "group": "weather", "note": "気象観測"},
-    "Starlink (sample)": {"type": "tle", "group": "starlink_sample", "note": "一部のみ表示（PoC / ローカルサンプル）"},
+    "ISS / Stations (LEO)": {"type": "tle", "group": "stations", "note": "ISSや地上局関連の低軌道衛星"},
+    "GNSS (GPS, Galileo etc.)": {"type": "tle", "group": "gnss", "note": "中軌道を周回する測位衛星群"},
+    "Weather Satellites": {"type": "tle", "group": "weather", "note": "気象観測衛星（静止軌道および低軌道）"},
+    "Starlink (sample)": {"type": "tle", "group": "starlink_sample", "note": "Starlink 衛星群の一部（低軌道衛星"},
 }
 
 SAT_COLORS = {
@@ -73,15 +69,6 @@ def get_globe_mesh(res_lon=160, res_lat=80, R=1.0):
     X, Y, Z = ll_to_xyz(Lat, Lon, R=R)
     return Lon, Lat, X, Y, Z
 
-@st.cache_data(show_spinner=False)
-def get_lines_xyz_cached(res: str, kind: str, stride: int, R: float):
-    path = MAP_FILES[res]["borders"] if kind == "borders" else MAP_FILES[res]["coast"]
-    lines, err = load_geojson_lines(path)
-    if err:
-        return [], [], [], err
-    xs, ys, zs = lines_to_xyz(lines, stride=stride, R=R)
-    return xs, ys, zs, None
-
 # ----------------------------
 # Helpers (GeoJSON lines)
 # ----------------------------
@@ -108,7 +95,7 @@ def load_geojson_lines(path: str):
             continue
 
         if gtype == "LineString":
-            arr = np.asarray(coords, dtype=float)  # (N,2)
+            arr = np.asarray(coords, dtype=float)
             if arr.ndim == 2 and arr.shape[1] >= 2:
                 lines.append(arr[:, :2])
         elif gtype == "MultiLineString":
@@ -116,7 +103,6 @@ def load_geojson_lines(path: str):
                 arr = np.asarray(part, dtype=float)
                 if arr.ndim == 2 and arr.shape[1] >= 2:
                     lines.append(arr[:, :2])
-        # Polygon等はここでは扱わない（軽量化のため）
     return lines, None
 
 def lines_to_xyz(lines, stride=8, R=1.008):
@@ -138,6 +124,16 @@ def lines_to_xyz(lines, stride=8, R=1.008):
         zs += z.tolist() + [None]
     return xs, ys, zs
 
+@st.cache_data(show_spinner=False)
+def get_lines_xyz_cached(kind: str, stride: int, R: float):
+    # kind: "borders" or "coast"
+    path = MAP_FILES[NE_RES_FIXED]["borders"] if kind == "borders" else MAP_FILES[NE_RES_FIXED]["coast"]
+    lines, err = load_geojson_lines(path)
+    if err:
+        return [], [], [], err
+    xs, ys, zs = lines_to_xyz(lines, stride=stride, R=R)
+    return xs, ys, zs, None
+
 # ----------------------------
 # Helpers (TLE local)
 # ----------------------------
@@ -156,8 +152,6 @@ def load_tles_local(group: str):
             f"TLE file not found: {path}\n"
             f"Please put local TLE at data/tle/*.tle (see TLE_FILES mapping)."
         )
-
-    # local file -> no web access
     return load.tle_file(path, reload=False)
 
 def compute_sat_points(sats, t, max_sats=60, R=1.03):
@@ -184,7 +178,7 @@ def compute_sat_latlon(sats, t, max_sats=60):
     return names, np.array(lats), np.array(lons)
 
 # ----------------------------
-# Dummy risk field
+# Dummy risk field (time + sats)
 # ----------------------------
 def dummy_risk_from_time_and_sats(Lat, Lon, t_seconds, sat_lats, sat_lons,
                                  aurora_amp=0.6, sat_amp=1.0,
@@ -226,57 +220,308 @@ def dummy_risk_from_time_and_sats(Lat, Lon, t_seconds, sat_lats, sat_lons,
     return np.clip(risk, 0, 1)
 
 # ----------------------------
-# Session state init
+# Build static background + frames (satellites + risk)
 # ----------------------------
-if "t_offset_sec" not in st.session_state:
-    st.session_state.t_offset_sec = 0
-if "scrub_offset_sec" not in st.session_state:
-    st.session_state.scrub_offset_sec = 0
-if "playing" not in st.session_state:
-    st.session_state.playing = False
+def build_figure_with_frames(
+    sats,
+    ts,
+    start_dt_utc: datetime,
+    frame_step_sec: int,
+    n_frames: int,
+    max_sats: int,
+    sat_color: str,
+    show_surface: bool,
+    show_borders: bool,
+    show_coast: bool,
+    outline_stride: int,
+    show_risk: bool,
+    risk_alpha: float,
+    risk_sigma_deg: float,
+    risk_sat_count: int,
+    risk_time_speed: float,
+    aurora_amp: float,
+    sat_amp: float,
+    play_speed_ms: int,
+    globe_res_lon: int = 160,
+    globe_res_lat: int = 80,
+):
+    fig = go.Figure()
+
+    # Mesh
+    Lon, Lat, X, Y, Z = get_globe_mesh(res_lon=globe_res_lon, res_lat=globe_res_lat, R=1.0)
+
+    # Base sphere
+    base = np.zeros_like(X)
+    fig.add_trace(go.Surface(
+        x=X, y=Y, z=Z,
+        surfacecolor=base,
+        showscale=False,
+        opacity=0.22,
+        hoverinfo="skip",
+        name="Base"
+    ))
+
+    # Optional shading
+    if show_surface:
+        surface_color = np.clip((np.abs(Lat) - 20) / 70, 0, 1)
+        fig.add_trace(go.Surface(
+            x=X, y=Y, z=Z,
+            surfacecolor=surface_color,
+            showscale=False,
+            opacity=0.55,
+            hoverinfo="skip",
+            name="Shading"
+        ))
+
+    # Borders / Coastlines (same color per request)
+    LINE_R = 1.008
+    outline_color = "rgba(230,230,255,1.0)"  # borders and coastlines identical
+    outline_width = 3
+
+    if show_borders:
+        bx, by, bz, err = get_lines_xyz_cached("borders", int(outline_stride), LINE_R)
+        if err:
+            st.warning(err)
+        else:
+            fig.add_trace(go.Scatter3d(
+                x=bx, y=by, z=bz,
+                mode="lines",
+                line=dict(width=outline_width, color=outline_color),
+                hoverinfo="skip",
+                name="Borders"
+            ))
+
+    if show_coast:
+        cx, cy, cz, err = get_lines_xyz_cached("coast", int(outline_stride), LINE_R)
+        if err:
+            st.warning(err)
+        else:
+            fig.add_trace(go.Scatter3d(
+                x=cx, y=cy, z=cz,
+                mode="lines",
+                line=dict(width=outline_width, color=outline_color),
+                hoverinfo="skip",
+                name="Coastlines"
+            ))
+
+    # Risk surface (initial)
+    risk_trace_index = None
+    t0_dt = start_dt_utc
+    t0 = ts.from_datetime(t0_dt)
+
+    if show_risk:
+        if len(sats) > 0 and risk_sat_count > 0:
+            _, sat_lats, sat_lons = compute_sat_latlon(sats, t0, max_sats=max_sats)
+            sat_lats = sat_lats[:risk_sat_count]
+            sat_lons = sat_lons[:risk_sat_count]
+        else:
+            sat_lats = np.array([])
+            sat_lons = np.array([])
+
+        risk0 = dummy_risk_from_time_and_sats(
+            Lat, Lon,
+            t_seconds=t0_dt.timestamp(),
+            sat_lats=sat_lats,
+            sat_lons=sat_lons,
+            aurora_amp=aurora_amp,
+            sat_amp=sat_amp,
+            sigma_deg=risk_sigma_deg,
+            time_speed=risk_time_speed,
+        )
+
+        fig.add_trace(go.Surface(
+            x=X, y=Y, z=Z,
+            surfacecolor=risk0,
+            showscale=False,
+            opacity=float(risk_alpha),
+            hoverinfo="skip",
+            name="Risk"
+        ))
+        risk_trace_index = len(fig.data) - 1
+
+    # Satellites (initial)
+    sx, sy, sz, names = compute_sat_points(sats, t0, max_sats=max_sats, R=1.03)
+    fig.add_trace(go.Scatter3d(
+        x=sx, y=sy, z=sz,
+        mode="markers",
+        marker=dict(size=3, color=sat_color),
+        text=names,
+        hovertemplate="%{text}<extra></extra>",
+        name="Satellites"
+    ))
+    sat_trace_index = len(fig.data) - 1
+
+    # Frames: update satellites (+ risk if enabled)
+    frames = []
+    jst = timezone(timedelta(hours=9))
+
+    for k in range(n_frames):
+        dt_k = start_dt_utc + timedelta(seconds=k * frame_step_sec)
+        t_k = ts.from_datetime(dt_k)
+
+        sxk, syk, szk, _ = compute_sat_points(sats, t_k, max_sats=max_sats, R=1.03)
+
+        frame_data = []
+        frame_traces = []
+
+        # (1) risk update
+        if show_risk and risk_trace_index is not None:
+            if len(sats) > 0 and risk_sat_count > 0:
+                _, sat_lats, sat_lons = compute_sat_latlon(sats, t_k, max_sats=max_sats)
+                sat_lats = sat_lats[:risk_sat_count]
+                sat_lons = sat_lons[:risk_sat_count]
+            else:
+                sat_lats = np.array([])
+                sat_lons = np.array([])
+
+            risk_k = dummy_risk_from_time_and_sats(
+                Lat, Lon,
+                t_seconds=dt_k.timestamp(),
+                sat_lats=sat_lats,
+                sat_lons=sat_lons,
+                aurora_amp=aurora_amp,
+                sat_amp=sat_amp,
+                sigma_deg=risk_sigma_deg,
+                time_speed=risk_time_speed,
+            )
+
+            # Update only surfacecolor (3D is safer with redraw=True)
+            frame_data.append(go.Surface(surfacecolor=risk_k, opacity=float(risk_alpha), showscale=False))
+            frame_traces.append(risk_trace_index)
+
+        # (2) satellite update
+        frame_data.append(go.Scatter3d(x=sxk, y=syk, z=szk))
+        frame_traces.append(sat_trace_index)
+
+        frames.append(go.Frame(
+            name=str(k),
+            data=frame_data,
+            traces=frame_traces,
+        ))
+
+    fig.frames = frames
+
+    # Slider labels (JST HH:MM)
+    steps = []
+    for k in range(n_frames):
+        dt_k = start_dt_utc + timedelta(seconds=k * frame_step_sec)
+        label = dt_k.astimezone(jst).strftime("%H:%M")
+        steps.append({
+            "args": [[str(k)], {"frame": {"duration": 0, "redraw": True}, "mode": "immediate"}],
+            "label": label,
+            "method": "animate"
+        })
+
+    fig.update_layout(
+        margin=dict(l=0, r=0, t=0, b=0),
+        showlegend=False,
+        uirevision="globe_static",
+        scene=dict(
+            xaxis=dict(visible=False),
+            yaxis=dict(visible=False),
+            zaxis=dict(visible=False),
+            aspectmode="data",
+            camera=dict(
+                eye=dict(
+                x=-1.0,   # 日本（東アジア）方向
+                y=0.8,
+                z=0.6
+            )),
+        ),
+        updatemenus=[{
+            "type": "buttons",
+            "direction": "left",
+            "x": 0.02,
+            "y": 0.02,
+            "xanchor": "left",
+            "yanchor": "bottom",
+            "showactive": False,
+            "bgcolor": "rgba(0,0,0,0)",
+            "bordercolor": "rgba(0,0,0,0)",
+            "borderwidth": 0,
+            "font": {"color": "black", "size": 13},
+            "pad": {"r": 10, "t": 10},
+            "buttons": [
+                {
+                    "label": "▶ Play",
+                    "method": "animate",
+                    "args": [
+                        None,
+                        {
+                            "frame": {"duration": int(play_speed_ms), "redraw": True},
+                            "transition": {"duration": 0},
+                            "fromcurrent": True,
+                            "mode": "immediate",
+                        }
+                    ],
+                },
+                {
+                    "label": "⏸ Pause",
+                    "method": "animate",
+                    "args": [
+                        [None],
+                        {
+                            "frame": {"duration": 0, "redraw": True},
+                            "transition": {"duration": 0},
+                            "mode": "immediate",
+                        },
+                    ],
+                },
+            ],
+        }],
+        sliders=[{
+            "active": 0,
+            "x": 0.02,
+            "y": -0.2,
+            "xanchor": "left",
+            "yanchor": "bottom",
+            "len": 0.96,
+            "pad": {"b": 0, "t": 0},
+            "currentvalue": {"prefix": "JST(HH:MM): "},
+            "steps": steps,
+        }]
+    )
+
+    return fig
 
 # ----------------------------
-# Sidebar
+# Sidebar UI
 # ----------------------------
 with st.sidebar:
+
+    generate = st.button("🎬 Generate animation", type="primary")
+
+    st.divider()
     st.header("Satellites")
     sat_label = st.selectbox("Satellite type", options=list(SAT_GROUPS.keys()), index=0)
     sat_conf = SAT_GROUPS[sat_label]
-
-    max_sats = st.slider("Max satellites", 1, 300 if "Starlink" in sat_label else 150, 50)
     st.caption(sat_conf["note"])
+    max_sats = st.slider("Max satellites", 1, 300 if "Starlink" in sat_label else 150, 50)
 
     st.divider()
-    st.header("Time")
-    step_sec = st.select_slider("Step (seconds)", [5, 10, 30, 60, 120, 300], value=60)
-    speed_x  = st.select_slider("Play speed (x)", [1, 2, 5, 10, 20, 50], value=10)
+    st.header("Animation (Plotly frames)")
+    frame_step_sec = st.select_slider("Frame step (seconds)", options=[10, 30, 60, 120, 300], value=60)
+    n_frames = st.slider("#frames", 5, 120, 30, help="例: step=60秒, frames=30 なら30分ぶん")
+    play_speed_ms = st.slider("Play frame duration (ms)", 50, 1500, 250, 50,
+                              help="小さいほど速く再生（重い場合は大きく）")
 
-    colA, colB = st.columns(2)
-    with colA:
-        if st.button("⏮ Reset"):
-            st.session_state.t_offset_sec = 0
-            st.session_state.scrub_offset_sec = 0
-    with colB:
-        st.session_state.playing = st.toggle("▶ Play", value=st.session_state.playing)
-
-    st.slider(
-        "Jump offset from now (seconds)",
+    st.divider()
+    st.header("Start time")
+    start_offset_sec = st.slider(
+        "Start offset from now (seconds)",
         min_value=-24*3600,
         max_value=24*3600,
-        step=int(step_sec),
-        key="scrub_offset_sec",
-        help="Play停止中はこの値でジャンプします。Play中は内部カウンタで時間が進みます。"
+        step=60,
+        value=0,
+        help="動画の開始時刻を現在(UTC)からずらします"
     )
 
-    st.divider()
-    st.header("Map detail (local GeoJSON)")
-    ne_res = st.selectbox("Resolution", ["110m", "50m", "10m"], index=1)
-    show_surface = st.checkbox("Show globe shading", True)
-    show_borders = st.checkbox("Show borders", True)
-    show_coast   = st.checkbox("Show coastlines", True)
-
-    default_stride = 12 if ne_res == "10m" else (8 if ne_res == "110m" else 6)
-    outline_stride = st.slider("Line sampling stride", 1, 30, default_stride)
+    #st.divider()
+    #st.header("Map (50m fixed)")
+    show_surface = True
+    show_borders = True
+    show_coast   = True
+    outline_stride = 2
 
     st.divider()
     st.header("Risk layer (dummy)")
@@ -285,128 +530,68 @@ with st.sidebar:
     risk_sigma_deg = st.slider("Spot radius (deg)", 2.0, 30.0, 10.0, 1.0)
     risk_sat_count = st.slider("Satellites used for risk", 0, max_sats, min(30, max_sats))
     risk_time_speed = st.select_slider("Risk time speed", [0.25, 0.5, 1.0, 2.0, 4.0], value=1.0)
+    aurora_amp = st.slider("Aurora band amp", 0.0, 2.0, 0.6, 0.05)
+    sat_amp = st.slider("Satellite spots amp", 0.0, 2.0, 1.0, 0.05)
+
+    #st.divider()
+    #st.header("Performance")
+    #globe_res_lon = st.select_slider("Globe grid res_lon", options=[80, 120, 160, 200], value=160)
+    globe_res_lon = 160
+    #globe_res_lat = st.select_slider("Globe grid res_lat", options=[40, 60, 80, 100], value=80)
+    globe_res_lat = 80
 
 # ----------------------------
-# Time progression
+# Load satellites
 # ----------------------------
-if st.session_state.playing:
-    st_autorefresh(interval=1000, key="tick")
-    st.session_state.t_offset_sec += int(step_sec) * int(speed_x)
-
-offset_sec = int(st.session_state.t_offset_sec) if st.session_state.playing else int(st.session_state.scrub_offset_sec)
-
 ts = get_timescale()
-now_utc = datetime.now(timezone.utc)
-target_dt = now_utc + timedelta(seconds=offset_sec)
-t = ts.from_datetime(target_dt)
-
-jst = timezone(timedelta(hours=9))
-st.caption(
-    f"Time: **{target_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC**"
-    f"  /  **{target_dt.astimezone(jst).strftime('%Y-%m-%d %H:%M:%S')} JST**"
-    f"  (offset={offset_sec}s)"
-)
-
-# ----------------------------
-# Build globe
-# ----------------------------
-fig = go.Figure()
-
-# Mesh (shared)
-Lon, Lat, X, Y, Z = get_globe_mesh(res_lon=160, res_lat=80, R=1.0)
-
-# Base sphere (always)
-base = np.zeros_like(X)
-fig.add_trace(go.Surface(
-    x=X, y=Y, z=Z,
-    surfacecolor=base,
-    showscale=False,
-    opacity=0.22,
-    hoverinfo="skip",
-    name="Base"
-))
-
-# Optional shading
-if show_surface:
-    surface_color = np.clip((np.abs(Lat) - 20) / 70, 0, 1)
-    fig.add_trace(go.Surface(
-        x=X, y=Y, z=Z,
-        surfacecolor=surface_color,
-        showscale=False,
-        opacity=0.55,
-        hoverinfo="skip",
-        name="Shading"
-    ))
-
-# Borders / Coast (local GeoJSON)
-LINE_R = 1.008
-if show_borders:
-    bx, by, bz, err = get_lines_xyz_cached(ne_res, "borders", int(outline_stride), LINE_R)
-    if err: st.warning(err)
-    else: fig.add_trace(go.Scatter3d(x=bx,y=by,z=bz, mode="lines", line=dict(width=2), hoverinfo="skip"))
-
-if show_coast:
-    cx, cy, cz, err = get_lines_xyz_cached(ne_res, "coastline", int(outline_stride), LINE_R)
-    if err: st.warning(err)
-    else: fig.add_trace(go.Scatter3d(x=cx,y=cy,z=cz, mode="lines", line=dict(width=2), hoverinfo="skip"))
-
-# Satellites (local TLE)
 if sat_conf["type"] == "tle":
     sats = load_tles_local(sat_conf["group"])
 else:
     sats = []
 
-# Risk layer (dummy; depends on sat subpoints + time)
-if show_risk:
-    if len(sats) > 0 and risk_sat_count > 0:
-        _, sat_lats, sat_lons = compute_sat_latlon(sats, t, max_sats=max_sats)
-        sat_lats = sat_lats[:risk_sat_count]
-        sat_lons = sat_lons[:risk_sat_count]
-    else:
-        sat_lats = np.array([])
-        sat_lons = np.array([])
+# ----------------------------
+# Show time range
+# ----------------------------
+now_utc = datetime.now(timezone.utc)
+start_dt = now_utc + timedelta(seconds=int(start_offset_sec))
+jst = timezone(timedelta(hours=9))
+end_dt = start_dt + timedelta(seconds=int(frame_step_sec) * (int(n_frames) - 1))
 
-    risk = dummy_risk_from_time_and_sats(
-        Lat, Lon,
-        t_seconds=target_dt.timestamp(),
-        sat_lats=sat_lats,
-        sat_lons=sat_lons,
-        sigma_deg=risk_sigma_deg,
-        time_speed=risk_time_speed,
-    )
-
-    fig.add_trace(go.Surface(
-        x=X, y=Y, z=Z,
-        surfacecolor=risk,
-        showscale=False,
-        opacity=float(risk_alpha),
-        hoverinfo="skip",
-        name="Risk"
-    ))
-
-# Satellite markers
-sx, sy, sz, names = compute_sat_points(sats, t, max_sats=max_sats, R=1.03)
-fig.add_trace(go.Scatter3d(
-    x=sx, y=sy, z=sz,
-    mode="markers",
-    marker=dict(size=3, color=SAT_COLORS[sat_label]),
-    text=names,
-    hovertemplate="%{text}<extra></extra>",
-    name="Satellites"
-))
-
-fig.update_layout(
-    margin=dict(l=0, r=0, t=0, b=0),
-    scene=dict(
-        xaxis=dict(visible=False),
-        yaxis=dict(visible=False),
-        zaxis=dict(visible=False),
-        aspectmode="data",
-        camera=dict(eye=dict(x=0.8, y=0.8, z=0.9)),
-    ),
-    showlegend=False,
-    uirevision="globe",
+st.caption(
+    f"Start: **{start_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC** / **{start_dt.astimezone(jst).strftime('%Y-%m-%d %H:%M:%S')} JST**  |  "
+    f"End: **{end_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC** / **{end_dt.astimezone(jst).strftime('%Y-%m-%d %H:%M:%S')} JST**"
 )
 
-st.plotly_chart(fig, use_container_width=True, key="globe_chart")
-st.caption("Drag to rotate / Scroll to zoom")
+# ----------------------------
+# Generate & Show
+# ----------------------------
+if not generate:
+    st.info("サイドバーで設定して **Generate animation** を押すと、衛星点＋リスク面が時間で動くアニメを生成します。")
+else:
+    with st.spinner("Building frames (satellites + risk)..."):
+        fig = build_figure_with_frames(
+            sats=sats,
+            ts=ts,
+            start_dt_utc=start_dt,
+            frame_step_sec=int(frame_step_sec),
+            n_frames=int(n_frames),
+            max_sats=int(max_sats),
+            sat_color=SAT_COLORS[sat_label],
+            show_surface=show_surface,
+            show_borders=show_borders,
+            show_coast=show_coast,
+            outline_stride=int(outline_stride),
+            show_risk=show_risk,
+            risk_alpha=float(risk_alpha),
+            risk_sigma_deg=float(risk_sigma_deg),
+            risk_sat_count=int(risk_sat_count),
+            risk_time_speed=float(risk_time_speed),
+            aurora_amp=float(aurora_amp),
+            sat_amp=float(sat_amp),
+            play_speed_ms=int(play_speed_ms),
+            globe_res_lon=int(globe_res_lon),
+            globe_res_lat=int(globe_res_lat),
+        )
+
+    st.plotly_chart(fig, use_container_width=True, key="globe_animation")
+    st.caption("Drag to rotate / Scroll to zoom / ▶ Play で再生（背景固定、衛星＋リスクのみ更新）")
