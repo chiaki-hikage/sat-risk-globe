@@ -12,7 +12,7 @@ from skyfield.api import load, wgs84
 # Page
 # ----------------------------
 st.set_page_config(layout="wide")
-st.title("3D Globe + Outlines + Moving Satellites + Risk (Plotly Frames / Local TLE + Local GeoJSON)")
+st.title("衛星軌道と宇宙天気の通信影響リスクの可視化デモ")
 
 # ----------------------------
 # Paths (local)
